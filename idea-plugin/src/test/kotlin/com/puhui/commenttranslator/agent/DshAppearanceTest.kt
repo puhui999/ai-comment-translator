@@ -7,12 +7,13 @@ import javax.swing.UIManager
 
 class DshAppearanceTest {
     @Test fun `IDE dark and light themes retain exact UI colors`() {
-        val keys = listOf("ToolWindow.background", "Label.foreground", "Label.disabledForeground", "Component.borderColor", "Component.focusColor")
+        val keys = listOf("ToolWindow.background", "Label.foreground", "Label.disabledForeground", "ContextHelp.foreground", "Component.borderColor", "Component.focusColor")
         val original = keys.associateWith { UIManager.get(it) }
         try {
             UIManager.put("ToolWindow.background", Color(0x202326))
             UIManager.put("Label.foreground", Color(0xf1f2f3))
-            UIManager.put("Label.disabledForeground", Color(0x909396))
+            UIManager.put("Label.disabledForeground", Color(0x434346))
+            UIManager.put("ContextHelp.foreground", Color(0x909396))
             UIManager.put("Component.borderColor", Color(0x404346))
             UIManager.put("Component.focusColor", Color(0x3366cc))
             assertEquals(DshAppearance(true, "#202326", "#f1f2f3", "#909396", "#404346", "#3366cc"), DshAppearance.capture())

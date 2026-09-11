@@ -8,20 +8,24 @@ class DshDeliveryQueueTest {
         val template = item()
         val pending = DshPendingContext(template.context, DshMode.GENERAL, "", null, false, resolveCurrentMode = true)
         var reads = 0
-        pending.resolveSnapshot { reads++; DshBrowserState("session-at-send", DshMode.CUSTOM, "Fresh current prompt", true) }
-        pending.resolveSnapshot { reads++; DshBrowserState("later-session", DshMode.GENERAL, "", true) }
+        val chosenSkills = mutableListOf("project-review")
+        pending.resolveSnapshot { reads++; DshBrowserState("session-at-send", DshMode.CUSTOM, "Fresh current prompt", true, chosenSkills) }
+        chosenSkills[0] = "different-skill"
+        pending.resolveSnapshot { reads++; DshBrowserState("later-session", DshMode.GENERAL, "", true, chosenSkills) }
         assertEquals(1, reads)
         assertEquals("session-at-send", pending.sessionId)
         assertEquals(DshMode.CUSTOM, pending.mode)
         assertEquals("Fresh current prompt", pending.customPrompt)
+        assertEquals(listOf("project-review"), pending.skillNames)
     }
 
     @Test fun explicitTutorSelectionKeepsTutorWhileResolvingTheFreshTarget() {
         val pending = item()
-        pending.resolveSnapshot { DshBrowserState("fresh-target", DshMode.CUSTOM, "Other session persona", true) }
+        pending.resolveSnapshot { DshBrowserState("fresh-target", DshMode.CUSTOM, "Other session persona", true, listOf("other-mode-skill")) }
         assertEquals("fresh-target", pending.sessionId)
         assertEquals(DshMode.TUTOR, pending.mode)
         assertEquals("", pending.customPrompt)
+        assertTrue("Explicit Tutor must not inherit another mode's bindings", pending.skillNames.isEmpty())
     }
 
     @Test fun missingSessionIsResolvedOnceAndRemainsAbsentAfterAmbiguousFailure() {

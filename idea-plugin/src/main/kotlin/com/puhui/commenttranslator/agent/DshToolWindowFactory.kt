@@ -314,7 +314,7 @@ internal class DshAgentPanel(private val project: Project) : Disposable {
         worker.execute {
             runCatching {
                 item.resolveSnapshot { active.state() }
-                active.send(item.context, item.mode, item.customPrompt, item.sessionId)
+                active.send(item.context, item.mode, item.customPrompt, item.sessionId, item.skillNames)
             }.fold(
                 onSuccess = { later {
                     if (!deliveries.complete(attempt, success = true)) return@later
@@ -322,7 +322,13 @@ internal class DshAgentPanel(private val project: Project) : Disposable {
                     flushQueue()
                 } },
                 onFailure = { failure -> later {
-                    if (!deliveries.complete(attempt, success = false)) return@later
+                    val cancelled = failure is DshSelectionCanceledException
+                    if (!deliveries.complete(attempt, success = cancelled)) return@later
+                    if (cancelled) {
+                        setStatus("这条选区已被 DSH 取消；如仍需处理，请重新选择并发送。", "error")
+                        flushQueue()
+                        return@later
+                    }
                     setStatus("选区仍保留，发送失败：${safeError(failure)}。可在 DSH 中重试。", "error")
                 } },
             )

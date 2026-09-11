@@ -42,6 +42,8 @@ class DshConfigurable : Configurable {
         add("", JLabel("固定版本：@deepseek-ai/dsh@${DshSettings.PINNED_VERSION}；首次安装需要联网。"))
         add("启动超时（秒）", timeout)
         add("", JLabel("每个项目使用独立的 DSH 会话和设置，关闭项目时结束插件启动的进程。"))
+        add("", JLabel("会话与模型设置保存在 IDE 配置目录；清理 IDE 缓存不会删除这些数据。"))
+        add("", JLabel("首次升级会复制旧缓存中的项目数据并保留原件；已有新目录数据优先，不做合并。"))
         add("", JLabel("模型与 Key 在 DSH 面板设置内配置；已有 DSH 配置不会被覆盖。"))
         add("", JLabel("修改启动设置后，在 DSH 面板点击重启生效。"))
         reset()

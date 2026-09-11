@@ -1,6 +1,6 @@
 # 注释译读 · AI Comment Translator
 
-本分支 `codex/dsh-agent-sidebar` 新增 IDEA 右侧完整 **DSH Agent** 工作台，以及通用、助教、自定义提示词模式。体验版为 `0.2.0-dsh-preview.2`，安装和使用见 [DSH 侧栏预览说明](idea-plugin/DSH-PREVIEW.md)。下文保留已发布翻译版的说明。
+本分支 `codex/dsh-agent-sidebar` 提供 IDEA 右侧完整 **DSH Agent** 工作台，以及绑定 Skill 的通用、助教、自定义模式。正式实验候选版为 `0.2.0-rc.1`，安装和真实模型配置见 [DSH 正式实验说明](idea-plugin/DSH-EXPERIMENT.md)。下文保留已发布翻译版的说明。
 
 使用自定义 AI 服务翻译代码注释，在编辑器中阅读译文，保留原注释的符号、文档标签和代码结构。译文只改变显示，不写入源文件。
 

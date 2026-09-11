@@ -1,5 +1,7 @@
 # DSH Agent 侧栏预览版
 
+本文保留 `preview.2` 的历史说明。当前正式实验候选版与真实模型配置请查看 [DSH-EXPERIMENT.md](DSH-EXPERIMENT.md)。
+
 开发分支：`codex/dsh-agent-sidebar`。插件版本：`0.2.0-dsh-preview.2`。本预览面向 IntelliJ IDEA `2026.2.0.1 / 262.8665.337`。
 
 右侧 Agent 窗口承载完整 DSH Web 界面。增强模式通过会话级系统提示词实现：通用模式使用原有行为，助教模式侧重代码理解，自定义模式使用用户编写的提示词。DSH 原有工具及权限配置继续生效。

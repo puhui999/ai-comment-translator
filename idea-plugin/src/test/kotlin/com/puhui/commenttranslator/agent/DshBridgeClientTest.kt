@@ -7,6 +7,61 @@ import org.junit.Test
 import java.net.InetSocketAddress
 
 class DshBridgeClientTest {
+    @Test fun cancelledReceiptsAreDistinguishedFromRecoverableSkillConflicts() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        var errorCode = "selection-canceled"
+        server.createContext("/state") { exchange ->
+            val body = """{"error":"conflict bridge-test-token","code":"$errorCode"}""".toByteArray()
+            exchange.sendResponseHeaders(409, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        try {
+            DshBridgeClient(endpoint(server)).use { client ->
+                try { client.state(); fail("A cancelled receipt must be terminal") }
+                catch (failure: DshSelectionCanceledException) {
+                    assertFalse(failure.message.orEmpty().contains("bridge-test-token"))
+                }
+                errorCode = "skill-unavailable"
+                try { client.state(); fail("A missing skill must fail") }
+                catch (failure: IllegalStateException) { assertFalse(failure is DshSelectionCanceledException) }
+            }
+        } finally { server.stop(0) }
+    }
+
+    @Test fun skillOnlyModeAndAbsentSessionSurviveTheIdeTransport() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        var stateBody = """{"sessionId":null,"mode":"custom","customPrompt":"","browserConnected":true,"skillNames":["project-review","ide-code-tutor"]}"""
+        var received = ""
+        server.createContext("/state") { exchange ->
+            val body = stateBody.toByteArray()
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.createContext("/context") { exchange ->
+            received = exchange.requestBody.bufferedReader().readText()
+            val body = """{"sessionId":"new-target","accepted":true}""".toByteArray()
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        try {
+            DshBridgeClient(endpoint(server)).use { client ->
+                val state = client.state()
+                assertEquals(listOf("project-review", "ide-code-tutor"), state.skillNames)
+                val selection = DshCodeContext("skills-selection", "println(1)", "/project/a.kt", "a.kt", "kt",
+                    1, 1, DshCodeRange(1, 1, 1, 11, 0, 10), "1", true)
+                client.send(selection, state.mode, state.customPrompt, state.sessionId, state.skillNames)
+                val payload = JsonParser.parseString(received).asJsonObject
+                assertTrue("An absent target must be explicit to prevent a later session from receiving it", payload.get("sessionId").isJsonNull)
+                assertEquals("", payload.get("customPrompt").asString)
+                assertEquals(state.skillNames, payload.getAsJsonArray("skillNames").map { it.asString })
+                stateBody = """{"sessionId":null,"mode":"general","customPrompt":"","browserConnected":true}"""
+                assertTrue("Older bridge snapshots have no forced skills", client.state().skillNames.isEmpty())
+            }
+        } finally { server.stop(0) }
+    }
+
     @Test fun publishesIdeAppearanceAndBoundsStatusWithoutSendingNullPartialFields() {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         val received = mutableListOf<String>()

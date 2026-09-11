@@ -17,7 +17,13 @@ enum class DshMode(val wireName: String, private val label: String) {
     }
 }
 
-data class DshBrowserState(val sessionId: String?, val mode: DshMode, val customPrompt: String, val browserConnected: Boolean)
+data class DshBrowserState(
+    val sessionId: String?, val mode: DshMode, val customPrompt: String, val browserConnected: Boolean,
+    val skillNames: List<String> = emptyList(),
+)
+
+/** The native DSH inbox has cancelled this request; retrying the same ID must not resurrect it. */
+internal class DshSelectionCanceledException(message: String) : IllegalStateException(message)
 
 /** Only talks to the private, loopback IDE bridge. The bearer token never enters the browser. */
 class DshBridgeClient(private val endpoint: DshRuntimeEndpoint) : AutoCloseable {
@@ -33,12 +39,14 @@ class DshBridgeClient(private val endpoint: DshRuntimeEndpoint) : AutoCloseable 
     fun state(): DshBrowserState {
         val body = request("GET", "state")
         return DshBrowserState(body.string("sessionId"), DshMode.fromWire(body.string("mode")),
-            body.string("customPrompt") ?: "", body.get("browserConnected")?.asBoolean == true)
+            body.string("customPrompt") ?: "", body.get("browserConnected")?.asBoolean == true,
+            body.getAsJsonArray("skillNames")?.map { it.asString } ?: emptyList())
     }
 
-    fun setMode(mode: DshMode, customPrompt: String, sessionId: String?) {
+    fun setMode(mode: DshMode, customPrompt: String, sessionId: String?, skillNames: List<String> = emptyList()) {
         // Explicit null means the instance default; it must never resolve to a later-selected session.
-        request("POST", "mode", mapOf("mode" to mode.wireName, "customPrompt" to customPrompt, "sessionId" to sessionId))
+        request("POST", "mode", mapOf("mode" to mode.wireName, "customPrompt" to customPrompt,
+            "sessionId" to sessionId, "skillNames" to skillNames))
     }
 
     /** Publishes only supplied fields; appearance is delivered before the embedded page opens. */
@@ -65,11 +73,14 @@ class DshBridgeClient(private val endpoint: DshRuntimeEndpoint) : AutoCloseable 
         }
     }
 
-    fun send(context: DshCodeContext, mode: DshMode, customPrompt: String, sessionId: String? = null): String? {
+    fun send(context: DshCodeContext, mode: DshMode, customPrompt: String, sessionId: String? = null,
+             skillNames: List<String> = emptyList()): String? {
         val payload = gson.toJsonTree(context).asJsonObject.apply {
             addProperty("mode", mode.wireName)
             addProperty("customPrompt", customPrompt)
-            if (sessionId != null) addProperty("sessionId", sessionId)
+            // Explicit null freezes the absence of a session; a later browser selection cannot steal this request.
+            addProperty("sessionId", sessionId)
+            add("skillNames", gson.toJsonTree(skillNames))
             addProperty("instruction", if (mode == DshMode.TUTOR)
                 "请作为助教讲解这段选中的代码，结合项目说明它的用途、执行过程与关键设计；根据需要检查相关定义，再引导我理解。"
                 else "请结合项目上下文分析这段选中的代码。")
@@ -95,7 +106,11 @@ class DshBridgeClient(private val endpoint: DshRuntimeEndpoint) : AutoCloseable 
         }
         if (response.statusCode() !in 200..299) {
             val message = data.string("error")?.take(400) ?: "HTTP ${response.statusCode()}"
-            throw IllegalStateException(message.replace(endpoint.bridgeToken, "[redacted]"))
+            val redacted = message.replace(endpoint.bridgeToken, "[redacted]")
+            if (response.statusCode() == 409 && data.string("code") == "selection-canceled") {
+                throw DshSelectionCanceledException(redacted)
+            }
+            throw IllegalStateException(redacted)
         }
         return data
     }

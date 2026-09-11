@@ -8,12 +8,15 @@ internal class DshPendingContext(
     initialSessionId: String?,
     private var destinationResolved: Boolean,
     private val resolveCurrentMode: Boolean = false,
+    initialSkillNames: List<String> = emptyList(),
 ) {
     var mode: DshMode = initialMode
         private set
     var customPrompt: String = initialCustomPrompt
         private set
     var sessionId: String? = initialSessionId
+        private set
+    var skillNames: List<String> = initialSkillNames.toList()
         private set
 
     fun resolveDestination(resolve: () -> String?) {
@@ -31,6 +34,7 @@ internal class DshPendingContext(
         if (resolveCurrentMode) {
             mode = current.mode
             customPrompt = current.customPrompt
+            skillNames = current.skillNames.toList()
         }
         destinationResolved = true
     }

@@ -20,7 +20,8 @@ data class DshAppearance(
             val foreground = color("Label.foreground", "TextArea.foreground") ?: if (dark) Color(0xdfe1e5) else Color(0x1e1f22)
             return DshAppearance(
                 dark, hex(background), hex(foreground),
-                hex(color("Label.disabledForeground", "ContextHelp.foreground") ?: if (dark) Color(0x9da0a8) else Color(0x6c707e)),
+                // Secondary text is readable help text, not a disabled control.
+                hex(color("ContextHelp.foreground") ?: if (dark) Color(0x9da0a8) else Color(0x6c707e)),
                 hex(color("Component.borderColor", "Separator.separatorColor") ?: if (dark) Color(0x43454a) else Color(0xd3d5db)),
                 hex(color("Component.focusColor", "Link.activeForeground") ?: if (dark) Color(0x548af7) else Color(0x3574f0)),
             )

@@ -27,7 +27,7 @@ Client 扩展通过 DSH 的 slot registry 与 theme runtime 工作。Host 提供
 
 主题仅传输明暗标记与受限的颜色值，不接受 CSS 文本。主题切换与对话状态同步彼此独立，不重建会话或重复发送源码。
 
-本轮保留现有提示词模式；关联 Skill 的能力属于后续功能，不在 UI 中提前声明已实现。
+`preview.2` 阶段保留提示词模式。后续 `0.2.0-rc.1` 在同一套 DSH 原生菜单和弹窗中加入模式关联 Skill，详见 [正式实验说明](../idea-plugin/DSH-EXPERIMENT.md)。
 
 ## 验收重点
 

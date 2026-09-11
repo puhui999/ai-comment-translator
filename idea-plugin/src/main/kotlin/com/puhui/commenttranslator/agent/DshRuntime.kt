@@ -210,13 +210,13 @@ class DshRuntime(private val project: Project) : Disposable {
             val settings = DshSettings.getInstance().state.copy()
             val node = findExecutable(settings.nodePath, "node") ?: fail("未找到 Node.js；请在 DSH Agent 设置中填写 Node 24 或以上的可执行文件。")
             if (!DshRuntimeProtocol.supportsNode(capture(listOf(node.toString(), "--version"), epoch))) fail("DSH 需要 Node.js 24 或以上，请更新 DSH Agent 的 Node 路径。")
-            val root = Path.of(PathManager.getSystemPath(), "puhui-comment-translator", "dsh")
-            Files.createDirectories(root)
-            val entry = resolveInstallation(root, settings, node, epoch)
-            checkActive(epoch)
             val workspace = project.basePath?.let(Path::of)?.takeIf(Files::isDirectory) ?: fail("请先打开一个本地项目目录。")
-            val home = root.resolve("projects").resolve(DshRuntimeProtocol.projectKey(workspace.toAbsolutePath().normalize().toString())).resolve("home")
-            Files.createDirectories(home)
+            val directories = DshDataDirectories(Path.of(PathManager.getSystemPath()), Path.of(PathManager.getConfigPath()), workspace)
+            DshDataDirectories.createPrivateDirectories(directories.installationRoot)
+            val entry = resolveInstallation(directories.installationRoot, settings, node, epoch)
+            checkActive(epoch)
+            val home = try { directories.prepareProjectHome { checkActive(epoch) } }
+                catch (error: DshDataDirectoryFailure) { fail(error.message!!) }
             val bridge = extractBridge(home.resolve("ide-integration"))
             val token = ByteArray(32).also { SecureRandom().nextBytes(it) }.let { Base64.getUrlEncoder().withoutPadding().encodeToString(it) }
             val url = AtomicReference<String?>()
@@ -267,23 +267,23 @@ class DshRuntime(private val project: Project) : Disposable {
     }
 
     private fun resolveInstallation(root: Path, settings: DshSettingsState, node: Path, epoch: Long): Path {
-        if (settings.installDirectory.isNotBlank()) return findEntry(Path.of(settings.installDirectory))
+        if (settings.installDirectory.isNotBlank()) return DshInstallation.findEntry(Path.of(settings.installDirectory), DshSettings.PINNED_VERSION)
             ?: fail("指定目录中未找到 DSH ${DshSettings.PINNED_VERSION}；可选择 npm 安装目录、DSH 包目录或 lib/bin.js。")
         val installation = root.resolve("runtime-${DshSettings.PINNED_VERSION}")
-        findEntry(installation)?.let { return it }
-        if (!settings.autoInstall) fail("尚未安装 DSH。请启用首次自动安装或选择已有安装目录。")
-        update(epoch, DshRuntimeState(DshRuntimePhase.INSTALLING, "首次启动：正在准备安装 DSH ${DshSettings.PINNED_VERSION}…"))
         FileChannel.open(root.resolve("install-${DshSettings.PINNED_VERSION}.lock"), StandardOpenOption.CREATE, StandardOpenOption.WRITE).use { channel ->
             val deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(10)
+            var waiting = false
             while (true) {
                 checkActive(epoch)
                 val lease = try { channel.tryLock() } catch (_: OverlappingFileLockException) { null }
                 if (lease != null) {
                     lease.use {
-                        findEntry(installation)?.let { return it }
-                        Files.createDirectories(installation)
+                        DshInstallation.completedEntry(installation, DshSettings.PINNED_VERSION)?.let { return it }
+                        if (!settings.autoInstall) fail("尚未完成 DSH 安装。请启用自动安装以完成或修复安装，或选择已有安装目录。")
+                        DshDataDirectories.createPrivateDirectories(installation)
                         val npm = findNpm(settings.npmPath, node)
                         update(epoch, DshRuntimeState(DshRuntimePhase.INSTALLING, "正在联网安装 DSH ${DshSettings.PINNED_VERSION}，首次安装可能需要几分钟…"))
+                        DshInstallation.beginInstallation(installation)
                         val command = npm + listOf("install", "--prefix", installation.toString(), "--no-audit", "--no-fund", "--save-exact", "@deepseek-ai/dsh@${DshSettings.PINNED_VERSION}")
                         val child = spawn(command, epoch, installation, emptyMap(), node.parent)
                         io.execute { consumeLines(child.inputStream) { } }
@@ -294,36 +294,50 @@ class DshRuntime(private val project: Project) : Disposable {
                             }
                             if (child.exitValue() != 0) fail("DSH 安装失败（npm 退出码 ${child.exitValue()}）。请检查 npm 网络与目录权限后重试。")
                         } finally { processes.stop(child) }
-                        return findEntry(installation) ?: fail("安装未产生有效的 DSH 入口，请重试或选择已有安装目录。")
+                        val entry = DshInstallation.findEntry(installation, DshSettings.PINNED_VERSION)
+                            ?: fail("安装未产生有效的 DSH 入口，请重试或选择已有安装目录。")
+                        DshInstallation.markCompleted(installation, DshSettings.PINNED_VERSION)
+                        return entry
                     }
                 }
                 if (System.nanoTime() > deadline) fail("等待其他 DSH 安装任务超时，请稍后重试。")
+                if (!waiting) {
+                    update(epoch, DshRuntimeState(DshRuntimePhase.INSTALLING, "正在等待其他项目完成 DSH 安装检查…"))
+                    waiting = true
+                }
                 Thread.sleep(200)
             }
         }
     }
 
-    private fun findEntry(root: Path): Path? {
-        val candidates = if (Files.isRegularFile(root)) listOf(root) else listOf(root.resolve("node_modules/@deepseek-ai/dsh/lib/bin.js"), root.resolve("lib/bin.js"))
-        return candidates.firstOrNull { entry ->
-            try {
-                val manifest = JsonParser.parseString(Files.readString(entry.parent.parent.resolve("package.json"))).asJsonObject
-                Files.isRegularFile(entry) && manifest.get("name").asString == "@deepseek-ai/dsh" && manifest.get("version").asString == DshSettings.PINNED_VERSION
-            } catch (_: Exception) { false }
-        }?.toAbsolutePath()?.normalize()
-    }
-
     private fun extractBridge(directory: Path): Path {
-        Files.createDirectories(directory)
-        for (file in listOf("package.json", "idea-bridge.mjs", "idea-client.js")) {
+        DshDataDirectories.createPrivateDirectories(directory)
+        for (file in listOf("package.json", "idea-bridge.mjs", "idea-client.js", "skills/code-tutor/SKILL.md")) {
             val content = DshRuntime::class.java.getResourceAsStream("/dsh/$file")?.use { it.readBytes() }
                 ?: fail("插件缺少 DSH 集成资源，请重新安装插件。")
-            Files.write(directory.resolve(file), content)
+            val target = directory.resolve(file)
+            DshDataDirectories.createPrivateDirectories(target.parent)
+            Files.write(target, content)
         }
         val path = directory.resolve("idea-bridge.mjs").toAbsolutePath().toString()
         // JSON strings are valid YAML scalars, so spaces, colons and Windows separators remain literal.
         val encoded = com.google.gson.Gson().toJson(path)
-        return directory.resolve("ide.cordis.patch.yml").also { Files.writeString(it, "- insert:\n    - id: ide-bridge\n      name: $encoded\n") }
+        // The automatic macOS picker opens an unparented OS dialog. DSH's official browse
+        // picker keeps this flow inside the embedded page. A patch name asserts the existing
+        // entry's identity; replacing a plugin therefore requires disabling it and inserting one.
+        val patch = """
+            - id: directory-picker
+              name: '@deepseek-ai/dsh-host-directory-picker-auto'
+              disabled: true
+            - insert:
+                - id: ide-directory-picker-host
+                  name: '@deepseek-ai/dsh-host-directory-picker-browse'
+                - id: ide-directory-picker-ui
+                  name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
+                - id: ide-bridge
+                  name: $encoded
+        """.trimIndent() + "\n"
+        return directory.resolve("ide.cordis.patch.yml").also { Files.writeString(it, patch) }
     }
 
     private fun spawn(command: List<String>, epoch: Long, directory: Path? = null, environment: Map<String, String> = emptyMap(), nodeDirectory: Path? = null): Process = synchronized(lock) {
