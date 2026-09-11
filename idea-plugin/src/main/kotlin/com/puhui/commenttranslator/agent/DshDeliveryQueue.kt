@@ -3,11 +3,16 @@ package com.puhui.commenttranslator.agent
 /** One immutable source snapshot with a destination resolved only once, including an absent session. */
 internal class DshPendingContext(
     val context: DshCodeContext,
-    val mode: DshMode,
-    val customPrompt: String,
+    initialMode: DshMode,
+    initialCustomPrompt: String,
     initialSessionId: String?,
     private var destinationResolved: Boolean,
+    private val resolveCurrentMode: Boolean = false,
 ) {
+    var mode: DshMode = initialMode
+        private set
+    var customPrompt: String = initialCustomPrompt
+        private set
     var sessionId: String? = initialSessionId
         private set
 
@@ -16,6 +21,18 @@ internal class DshPendingContext(
             sessionId = resolve()
             destinationResolved = true
         }
+    }
+
+    /** Resolves target and the current-mode choice together exactly once before the first attempt. */
+    fun resolveSnapshot(resolve: () -> DshBrowserState) {
+        if (destinationResolved) return
+        val current = resolve()
+        sessionId = current.sessionId
+        if (resolveCurrentMode) {
+            mode = current.mode
+            customPrompt = current.customPrompt
+        }
+        destinationResolved = true
     }
 }
 

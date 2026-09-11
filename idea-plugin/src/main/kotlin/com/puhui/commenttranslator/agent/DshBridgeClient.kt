@@ -41,6 +41,30 @@ class DshBridgeClient(private val endpoint: DshRuntimeEndpoint) : AutoCloseable 
         request("POST", "mode", mapOf("mode" to mode.wireName, "customPrompt" to customPrompt, "sessionId" to sessionId))
     }
 
+    /** Publishes only supplied fields; appearance is delivered before the embedded page opens. */
+    fun updateIdeState(appearance: DshAppearance? = null, status: DshIdeStatus? = null) {
+        val values = buildMap<String, Any> {
+            if (appearance != null) put("appearance", appearance)
+            if (status != null) put("status", status.copy(message = status.message.take(300), queued = status.queued.coerceIn(0, 10000)))
+        }
+        if (values.isNotEmpty()) request("POST", "ide/state", values)
+    }
+
+    /** Drains explicit host commands, rejecting unknown actions rather than executing arbitrary IDE commands. */
+    fun commands(): List<DshIdeCommand> {
+        val response = request("GET", "ide/commands")
+        val commands = response.get("commands")?.takeIf { it.isJsonArray }?.asJsonArray ?: return emptyList()
+        return commands.take(100).mapNotNull { value ->
+            runCatching {
+                val command = value.asJsonObject
+                val id = command.string("id") ?: return@runCatching null
+                val action = command.string("action") ?: return@runCatching null
+                if (id.isBlank() || id.length > 128 || action !in setOf("settings", "restart", "retry")) return@runCatching null
+                DshIdeCommand(id, action)
+            }.getOrNull()
+        }
+    }
+
     fun send(context: DshCodeContext, mode: DshMode, customPrompt: String, sessionId: String? = null): String? {
         val payload = gson.toJsonTree(context).asJsonObject.apply {
             addProperty("mode", mode.wireName)

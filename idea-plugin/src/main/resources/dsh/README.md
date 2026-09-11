@@ -48,12 +48,27 @@ Responses are plain JSON. Errors are non-2xx `{ "error": "message" }`.
 | `PUT /sessions/ID/mode` | Set the exact session's mode |
 | `POST /context` | Atomically resolve current session (create if absent), set optional mode, and enqueue selection |
 | `POST /sessions/ID/context` | Enqueue into the exact session |
+| `POST /ide/state` | Publish the IDE's current `appearance` and/or delivery `status` |
+| `GET /ide/commands` | Drain `{commands:[{id,action}]}` requested by the embedded workbench |
+
+The browser uses the cookie-authenticated `POST /ide-dsh/action` route for mode
+selection and native IDE commands. Mode actions explicitly carry a session ID
+or `null` for the new-session default. `settings`, `restart`, and `retry` are the
+only native command names; no executable, file path, or arbitrary script is
+accepted. The queue holds at most 32 outstanding commands. Appearance is an IDE
+boolean `dark` and five validated `#RRGGBB` values (`background`, `foreground`,
+`muted`, `border`, `accent`). A delivery status is `{message,kind,queued}`, with
+`kind` one of `idle`, `busy`, `success`, or `error`. Both are returned with browser
+heartbeats so the native DSH Client extension can use the original theme runtime
+and UI slots. They are ephemeral and do not rewrite saved conversation modes.
 
 Context body: `{id?, text, mode?, customPrompt?, prompt?, instruction?, filePath?,
 relativePath?, language?, range?, startLine?, endLine?, documentVersion?, unsaved?}`.
 Keep `id` and all body fields unchanged for a retry. `range` may contain line,
-column, and offset coordinates. Selection text is preserved as a JSON string,
-including unsaved edits and code fences. Source limit is 200,000 UTF-16 code units;
+column, and offset coordinates. The native DSH user bubble renders plain text:
+selection text retains its exact line breaks and indentation, with concise file,
+range, version and unsaved-state lines. No HTML, JSON or Markdown wrapper is
+added. Source limit is 200,000 UTF-16 code units;
 JSON request limit is 2 MiB; custom prompt and instruction limits are 16,000
 characters each. The result `{sessionId, accepted:true, requestId}` means DSH
 accepted the message into its queue, not that model execution has finished.

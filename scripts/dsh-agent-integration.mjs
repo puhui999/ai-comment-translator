@@ -16,26 +16,54 @@ const resource = fileURLToPath(new URL('../idea-plugin/src/main/resources/dsh/id
 // Exercise the browser race: switching sessions during an in-flight poll must
 // immediately publish the new selection without waiting for the next interval.
 {
-  let plugin; let subscriber; let release; let dispose; let selected = 'session-a';
-  const posted = [];
+  let plugin; let subscriber; let release; let selected = 'session-a';
+  const posted = []; const disposers = []; const slots = []; const overrides = [];
+  let preference = 'light';
+  const clientAppearance = { dark: true, background: '#242428', foreground: '#E7E7EA', muted: '#A8A8AD', border: '#45454A', accent: '#589DF6' };
+  // Render-only components are not mounted by this protocol test. The real
+  // DSH boot below still resolves the actual React and primitives packages.
+  const react = {
+    createElement: (type, props, ...children) => ({ type, props, children }),
+    useSyncExternalStore: (_subscribe, snapshot) => snapshot(),
+    useState: initial => [typeof initial === 'function' ? initial() : initial, () => {}],
+  };
+  const primitives = new Proxy({}, { get: (_target, name) => function Primitive() { return name; } });
   runInNewContext(await readFile(join(resource, '../idea-client.js'), 'utf8'), {
-    window: { __ModuleLoader__: { load: entry => { plugin = entry.factory(); } } },
+    window: { __ModuleLoader__: { load: entry => { plugin = entry.factory(name => {
+      if (name === 'react') return react;
+      if (name === '@deepseek-ai/dsh-client-ui-primitives') return primitives;
+      throw new Error(`Unexpected client dependency: ${name}`);
+    }); } } },
     crypto: { randomUUID: () => 'client-test' }, AbortController, console, queueMicrotask,
     setInterval: () => 1, clearInterval: () => {},
     fetch: async (_url, options) => {
       posted.push(JSON.parse(options.body));
       if (posted.length === 1) await new Promise(done => { release = done; });
-      return { ok: true, json: async () => ({}) };
+      return { ok: true, json: async () => ({ sessionId: selected, mode: 'tutor', customPrompt: '', appearance: clientAppearance, status: { message: '', kind: 'idle', queued: 0 } }) };
     },
   });
   plugin.apply({
     sessions: { list: { getSnapshot: () => ({ current: selected }), subscribe: listener => { subscriber = listener; return () => {}; } } },
-    uiWorkspace: { openSession: () => {} }, effect: effect => { dispose = effect(); },
+    uiWorkspace: { openSession: () => {} }, effect: effect => { const dispose = effect(); if (typeof dispose === 'function') disposers.push(dispose); },
+    slots: { inject: (_name, register) => register(), register: (definition, component) => { slots.push({ definition, component }); return () => {}; } },
+    on: () => () => {},
+    theme: {
+      overrideTokens: (source, tokens) => { overrides.push({ source, tokens }); return () => {}; },
+      setTheme: value => { preference = value; },
+      getTheme: () => ({ preference, active: { id: preference, colorScheme: preference, tokens: {} } }),
+    },
   });
   selected = 'session-b'; subscriber(); release();
   await new Promise(done => setImmediate(done));
   assert.deepEqual(posted.map(item => item.sessionId), ['session-a', 'session-b']);
-  dispose();
+  assert.ok(slots.some(slot => slot.definition.name === 'conversation.input.left'), 'Mode control contributes to the native composer slot');
+  assert.ok(slots.some(slot => slot.definition.name === 'sidebar.footer.action'), 'IDE actions contribute to the native sidebar slot');
+  assert.ok(overrides.length > 0, 'IDE colors are applied through the native theme service');
+  assert.equal(preference, 'dark');
+  for (const { tokens } of overrides) for (const value of Object.values(tokens)) {
+    assert.equal(typeof value.light, 'string'); assert.equal(typeof value.dark, 'string');
+  }
+  for (const dispose of disposers.reverse()) dispose();
 }
 const token = randomBytes(32).toString('hex');
 const toolPath = join(projectDir, 'learning.ts');
@@ -120,18 +148,96 @@ try {
   const created = await call('/sessions', { mode: 'tutor' });
   const id = created.sessionId;
   assert.equal((await call('/sessions')).items.some(item => item.sessionId === id), true);
+  // The native DSH controls use the official same-origin browser cookie. IDE
+  // appearance/status and lifecycle commands use the separately authenticated
+  // process bridge; neither channel may accidentally inherit the other's auth.
+  const browserRequest = async (path, value, { includeCookie = true, requestOrigin = origin, status = 200 } = {}) => {
+    const response = await fetch(origin + path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(includeCookie ? { cookie } : {}), ...(requestOrigin ? { origin: requestOrigin } : {}) },
+      body: JSON.stringify(value),
+    });
+    const result = await response.json();
+    assert.equal(response.status, status, `${path}: ${JSON.stringify(result)}`);
+    return result;
+  };
+  await browserRequest('/ide-dsh/action', { action: 'settings' }, { includeCookie: false, status: 401 });
+  await browserRequest('/ide-dsh/action', { action: 'settings' }, { requestOrigin: 'https://attacker.invalid', status: 403 });
+  await browserRequest('/ide-dsh/action', { action: 'evaluate', code: 'alert(1)' }, { status: 400 });
+  await browserRequest('/ide-dsh/action', { action: 'mode', mode: 'general' }, { status: 400 });
+  await browserRequest('/ide-dsh/action', { action: 'mode', sessionId: '', mode: 'general' }, { status: 400 });
+  await browserRequest('/ide-dsh/action', { action: 'mode', sessionId: 'missing-session', mode: 'general' }, { status: 404 });
+  assert.deepEqual((await call('/ide/commands')).commands, [], 'Rejected browser actions do not create IDE commands');
+  const other = await call('/sessions', { mode: 'general', title: 'Protocol isolation' });
+  let browser = await browserRequest('/ide-dsh/browser', { clientId: 'integration', sessionId: null, navigationRevision: 0 });
+  const browserRevision = browser.navigation.revision;
+  browser = await browserRequest('/ide-dsh/browser', { clientId: 'integration', sessionId: id, navigationRevision: browserRevision });
+  assert.equal(browser.sessionId, id);
+  await browserRequest('/ide-dsh/action', { action: 'mode', sessionId: other.sessionId, mode: 'custom', customPrompt: 'OTHER_SESSION_MODE' });
+  assert.equal((await call('/state')).mode, 'tutor', 'Native mode changes target the supplied session, not the latest selected one');
+  browser = await browserRequest('/ide-dsh/action', { action: 'mode', sessionId: null, mode: 'general' });
+  assert.equal(browser.mode, 'tutor', 'An explicit null mode target changes only the new-session default');
+  browser = await browserRequest('/ide-dsh/action', { action: 'mode', sessionId: id, mode: 'custom', customPrompt: 'NATIVE_CONTROL_MODE' });
+  assert.equal(browser.customPrompt, 'NATIVE_CONTROL_MODE');
+  await browserRequest('/ide-dsh/action', { action: 'mode', sessionId: id, mode: 'tutor' });
+  const appearance = { dark: true, background: '#242428', foreground: '#E7e7EA', muted: '#a8A8Ad', border: '#45454A', accent: '#589DF6' };
+  const nativeStatus = { message: 'IDE selection is queued', kind: 'busy', queued: 2 };
+  await call('/ide/state', { appearance, status: nativeStatus });
+  browser = await browserRequest('/ide-dsh/browser', { clientId: 'integration', sessionId: id, navigationRevision: browserRevision });
+  assert.deepEqual(browser.appearance, appearance);
+  assert.deepEqual(browser.status, nativeStatus);
+  const nextStatus = { message: 'Ready', kind: 'success', queued: 0 };
+  await call('/ide/state', { status: nextStatus });
+  browser = await browserRequest('/ide-dsh/browser', { clientId: 'integration', sessionId: id, navigationRevision: browserRevision });
+  assert.deepEqual(browser.appearance, appearance, 'A partial status update retains IDE colors');
+  assert.deepEqual(browser.status, nextStatus);
+  for (const invalid of [
+    { appearance: { ...appearance, background: 'url(https://attacker.invalid)' } },
+    { appearance: { dark: true } },
+    { status: { ...nextStatus, queued: -1 } },
+    { status: { ...nextStatus, queued: 10001 } },
+    { status: { ...nextStatus, queued: 0.5 } },
+    { status: { ...nextStatus, message: 'x'.repeat(301) } },
+    { status: { ...nextStatus, kind: 'execute' } },
+  ]) {
+    const response = await fetch(endpoint + '/ide/state', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(invalid) });
+    assert.equal(response.status, 400, await response.text());
+  }
+  const commandReceipts = [];
+  for (const action of ['settings', 'restart', 'retry']) {
+    const receipt = await browserRequest('/ide-dsh/action', { action });
+    assert.equal(receipt.accepted, true);
+    assert.equal(typeof receipt.id, 'string');
+    commandReceipts.push({ id: receipt.id, action });
+  }
+  assert.equal(new Set(commandReceipts.map(item => item.id)).size, 3);
+  assert.deepEqual((await call('/ide/commands')).commands, commandReceipts, 'Native commands preserve their exact allowlisted actions and order');
+  assert.deepEqual((await call('/ide/commands')).commands, [], 'Commands are drained exactly once');
+  for (let index = 0; index < 32; index++) await browserRequest('/ide-dsh/action', { action: 'settings' });
+  await browserRequest('/ide-dsh/action', { action: 'settings' }, { status: 429 });
+  assert.equal((await call('/ide/commands')).commands.length, 32, 'A full command queue refuses overflow without losing admitted commands');
+  assert.deepEqual((await call('/ide/commands')).commands, []);
   await call('/mode', { mode: 'custom', customPrompt: 'FUTURE_SESSION_DEFAULT', sessionId: null });
   assert.equal((await call('/state')).mode, 'tutor', 'Default changes cannot rewrite the selected session');
-  const selection = { id: 'integration-selection', text: 'const answer = 42;', mode: 'tutor', prompt: 'IDE_TOOL_TEST: read the original file and explain the selection.', filePath: join(projectDir, 'learning.ts'), unsaved: true,
-    range: { startLine: 1, startColumn: 1, endLine: 1, endColumn: 19, startOffset: 0, endOffset: 18 }, documentVersion: 3 };
+  const selectionText = 'const answer = 42;\n// 中文注释：这是尚未保存的代码\nconst markdown = "```";\n';
+  const selection = { id: 'integration-selection', text: selectionText, mode: 'tutor', prompt: 'IDE_TOOL_TEST: read the original file and explain the selection.', filePath: join(projectDir, 'learning.ts'), relativePath: 'learning.ts', language: 'typescript', unsaved: true,
+    range: { startLine: 1, startColumn: 1, endLine: 4, endColumn: 1, startOffset: 0, endOffset: selectionText.length }, documentVersion: 3 };
   const sent = await call('/context', selection);
   assert.equal(sent.accepted, true);
   assert.deepEqual(await call('/context', selection), sent, 'retry is idempotent');
   await until(() => model.requests.some(request => JSON.stringify(request.messages).includes('const answer = 42;')), 'Model received IDE selection');
   const request = model.requests.find(request => JSON.stringify(request.messages).includes('const answer = 42;'));
+  const selectionMessage = request.messages.find(message => message.role === 'user' && typeof message.content === 'string' && message.content.includes(selectionText));
+  assert.ok(selectionMessage, 'Multiline Chinese source and embedded code fences reach the model without escaping or truncation');
+  const selectionHeader = selectionMessage.content.replace(selectionText, '');
+  assert.ok(selectionHeader.includes('未保存的编辑器内容'), 'The selected source retains its unsaved-document state');
+  for (const metadata of [`文件：${selection.filePath}`, '项目路径：learning.ts', 'typescript', '第 1:1–4:1 行', '文档版本 3', `字符偏移 0–${selectionText.length}`]) {
+    assert.ok(selectionHeader.includes(metadata), `Selection metadata remains readable: ${metadata}`);
+  }
+  assert.ok(!/<details>|<summary>|```|"unsaved"\s*:/.test(selectionHeader), 'The source is sent as readable plain text without generated HTML, Markdown fences, or JSON metadata');
   const system = request.messages.filter(message => message.role === 'system').map(message => message.content).join('\n');
   assert.ok(system.includes('programming learning assistant'), 'Additive tutor prompt reached the real adapter');
-  assert.ok(request.tools.length > 5, 'Full standard agent tool roster remains present');
+  assert.equal(request.tools.length, 27, 'The pinned full Web profile keeps all 27 standard tools');
   await call('/mode', { mode: 'custom', customPrompt: 'CUSTOM_IDE_TEST_MODE' });
   await until(() => model.requests.some(request => request.messages.some(message => message.role === 'tool' && String(message.content).includes('IDE_READ_PROOF'))), 'Real DSH read tool result');
   const continued = model.requests.find(request => request.messages.some(message => message.role === 'tool' && String(message.content).includes('IDE_READ_PROOF')));

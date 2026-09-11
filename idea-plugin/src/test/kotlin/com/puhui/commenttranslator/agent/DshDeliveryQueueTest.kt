@@ -4,6 +4,26 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DshDeliveryQueueTest {
+    @Test fun currentModeAndDestinationAreResolvedTogetherAndStayFrozenAcrossRetry() {
+        val template = item()
+        val pending = DshPendingContext(template.context, DshMode.GENERAL, "", null, false, resolveCurrentMode = true)
+        var reads = 0
+        pending.resolveSnapshot { reads++; DshBrowserState("session-at-send", DshMode.CUSTOM, "Fresh current prompt", true) }
+        pending.resolveSnapshot { reads++; DshBrowserState("later-session", DshMode.GENERAL, "", true) }
+        assertEquals(1, reads)
+        assertEquals("session-at-send", pending.sessionId)
+        assertEquals(DshMode.CUSTOM, pending.mode)
+        assertEquals("Fresh current prompt", pending.customPrompt)
+    }
+
+    @Test fun explicitTutorSelectionKeepsTutorWhileResolvingTheFreshTarget() {
+        val pending = item()
+        pending.resolveSnapshot { DshBrowserState("fresh-target", DshMode.CUSTOM, "Other session persona", true) }
+        assertEquals("fresh-target", pending.sessionId)
+        assertEquals(DshMode.TUTOR, pending.mode)
+        assertEquals("", pending.customPrompt)
+    }
+
     @Test fun missingSessionIsResolvedOnceAndRemainsAbsentAfterAmbiguousFailure() {
         val queue = DshDeliveryQueue()
         val item = item()

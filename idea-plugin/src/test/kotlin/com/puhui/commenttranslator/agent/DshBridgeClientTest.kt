@@ -7,6 +7,49 @@ import org.junit.Test
 import java.net.InetSocketAddress
 
 class DshBridgeClientTest {
+    @Test fun publishesIdeAppearanceAndBoundsStatusWithoutSendingNullPartialFields() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val received = mutableListOf<String>()
+        server.createContext("/ide/state") { exchange ->
+            assertEquals("Bearer bridge-test-token", exchange.requestHeaders.getFirst("Authorization"))
+            received.add(exchange.requestBody.bufferedReader().readText())
+            val body = "{\"ok\":true}".toByteArray()
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        try {
+            DshBridgeClient(endpoint(server)).use { client ->
+                client.updateIdeState(appearance = DshAppearance(true, "#202326", "#eeeeee", "#999999", "#444444", "#3366cc"))
+                val initial = JsonParser.parseString(received[0]).asJsonObject
+                assertFalse(initial.has("status"))
+                assertEquals("#202326", initial.getAsJsonObject("appearance").get("background").asString)
+                assertTrue(initial.getAsJsonObject("appearance").get("dark").asBoolean)
+                client.updateIdeState(status = DshIdeStatus("x".repeat(500), "busy", 20000))
+                val next = JsonParser.parseString(received[1]).asJsonObject
+                assertFalse(next.has("appearance"))
+                assertEquals(300, next.getAsJsonObject("status").get("message").asString.length)
+                assertEquals(10000, next.getAsJsonObject("status").get("queued").asInt)
+            }
+        } finally { server.stop(0) }
+    }
+
+    @Test fun drainsOnlySupportedHostActionsWithBoundedCommandIds() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/ide/commands") { exchange ->
+            assertEquals("Bearer bridge-test-token", exchange.requestHeaders.getFirst("Authorization"))
+            val body = """{"commands":[{"id":"a","action":"settings"},{"id":"b","action":"restart"},{"id":"c","action":"retry"},{"id":"evil","action":"executeCommand"},{"id":"","action":"settings"},null]}""".toByteArray()
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        try {
+            DshBridgeClient(endpoint(server)).use { client ->
+                assertEquals(listOf(DshIdeCommand("a", "settings"), DshIdeCommand("b", "restart"), DshIdeCommand("c", "retry")), client.commands())
+            }
+        } finally { server.stop(0) }
+    }
+
     @Test fun modeChangeKeepsExplicitNullAsDefaultInsteadOfTargetingLaterCurrentSession() {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         var received = ""

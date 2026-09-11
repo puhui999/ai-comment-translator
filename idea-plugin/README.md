@@ -2,7 +2,7 @@
 
 分支导航：[IntelliJ IDEA · master-idea（默认分支）](https://github.com/puhui999/ai-comment-translator/tree/master-idea) · [VS Code · master-vscode](https://github.com/puhui999/ai-comment-translator/tree/master-vscode)。本文对应 IDEA 插件 ZIP；VS Code 使用其分支中的 VSIX 安装包。返回 [项目首页](../README.md)。
 
-本分支源码为 **`0.2.0-dsh-preview.1`**，新增右侧完整 DSH 工作台及选区助教入口，参见 [DSH Agent 预览说明](DSH-PREVIEW.md)。GitHub 已发布的翻译版仍为 **`0.1.6`**，下文介绍其翻译功能。
+本分支源码为 **`0.2.0-dsh-preview.2`**，新增右侧完整 DSH 工作台及选区助教入口，参见 [DSH Agent 预览说明](DSH-PREVIEW.md)。GitHub 已发布的翻译版仍为 **`0.1.6`**，下文介绍其翻译功能。
 
 默认在原注释位置显示 AI 译文，悬停查看原文，点击后查看、编辑原注释，光标和选区离开后自动恢复译文。独立注释采用无边框多行排版；设置中也可选择原文与译文上下对照。显示使用编辑器的折叠或 Inlay 机制，译文不写入源文件，保存、撤销、普通复制和 Git diff 仍基于源码。
 
