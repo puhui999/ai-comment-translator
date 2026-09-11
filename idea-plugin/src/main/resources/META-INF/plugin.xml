@@ -6,12 +6,16 @@
     在原注释位置显示 AI 译文，独立注释支持无边框多行排版，悬停查看原文，点击后编辑。
     支持自定义 OpenAI 兼容服务、逐条并发请求、目标语言识别、本地 SQLite 缓存，以及可选的上下对照显示。
     译文不会写入源码。包含无需 API 的离线体验示例。
+    预览版新增右侧完整 DSH Agent 工作台，支持发送编辑器选区，以及通用、助教和自定义提示词模式。
   ]]></description>
   <depends>com.intellij.modules.platform</depends>
   <depends>com.intellij.modules.lang</depends>
+  <depends>com.intellij.modules.jcef</depends>
   <extensions defaultExtensionNs="com.intellij">
     <postStartupActivity implementation="com.puhui.commenttranslator.TranslationStartup"/>
     <applicationConfigurable parentId="tools" id="com.puhui.comment-translator.settings" displayName="注释译读" instance="com.puhui.commenttranslator.settings.TranslationConfigurable"/>
+    <applicationConfigurable parentId="tools" id="com.puhui.comment-translator.dsh.settings" displayName="DSH Agent" instance="com.puhui.commenttranslator.agent.DshConfigurable"/>
+    <toolWindow id="DSH Agent" anchor="right" factoryClass="com.puhui.commenttranslator.agent.DshToolWindowFactory" icon="AllIcons.Actions.Annotate" canCloseContents="false"/>
     <statusBarWidgetFactory id="PuhuiCommentTranslatorStatus" implementation="com.puhui.commenttranslator.TranslationStatusFactory"/>
     <notificationGroup id="Comment Translator" displayType="BALLOON"/>
     <editorActionHandler action="EditorDelete" implementationClass="com.puhui.commenttranslator.editor.TranslationDeleteHandler" order="first"/>
@@ -32,6 +36,10 @@
       <action id="CommentTranslator.Reader" class="com.puhui.commenttranslator.actions.ReaderAction" text="打开只读译文"/>
       <action id="CommentTranslator.CopyTranslation" class="com.puhui.commenttranslator.actions.CopyTranslationAction" text="复制当前译文"/>
       <action id="CommentTranslator.ExpandTranslation" class="com.puhui.commenttranslator.actions.ExpandTranslationAction" text="切换当前注释原文 / 展开译文"/>
+      <separator/>
+      <action id="CommentTranslator.DshAgent" class="com.puhui.commenttranslator.agent.OpenDshAgentAction" text="打开 DSH Agent"/>
+      <action id="CommentTranslator.SendToDshAgent" class="com.puhui.commenttranslator.agent.SendSelectionToDshAgentAction" text="发送选区到 Agent"/>
+      <action id="CommentTranslator.SendToDshTutor" class="com.puhui.commenttranslator.agent.SendSelectionToDshTutorAction" text="发送选区到 AI 助教"/>
       <separator/>
       <action id="CommentTranslator.Settings" class="com.puhui.commenttranslator.actions.SettingsAction" text="配置翻译服务…"/>
       <action id="CommentTranslator.ClearCache" class="com.puhui.commenttranslator.actions.ClearCacheAction" text="清除本地翻译缓存"/>

@@ -20,6 +20,7 @@ dependencies {
         if (localIde != null) local(localIde) else intellijIdea("2026.2.0.1")
         bundledPlugin("com.intellij.java")
         bundledPlugin("org.jetbrains.kotlin")
+        bundledPlugin("com.intellij.modules.jcef")
         testFramework(TestFrameworkType.Platform)
     }
     implementation("com.google.code.gson:gson:2.13.2")

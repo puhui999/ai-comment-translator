@@ -1,0 +1,14 @@
+{
+  "name": "@translate/idea-dsh-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "idea-bridge.mjs",
+  "exports": { ".": "./idea-bridge.mjs", "./client": "./idea-client.js" },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-api-session-controller", "@deepseek-ai/dsh-client-ui-workspace"]
+    }
+  }
+}
